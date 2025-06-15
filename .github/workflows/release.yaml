@@ -59,7 +59,6 @@ jobs:
         with:
           name: SDK-spec
           path: target/eos-sdk-spec.zip
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 
   release:
     name: Release SDK specs
@@ -72,25 +71,40 @@ jobs:
           name: SDK-spec
           path: .
  
+      - name: Build short SHA string and spec SHA
+        id: info
+        run: |
+          {
+            echo -n GH_SHA=
+            cut -c 1-7 <<<"${{ github.sha }}"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo -n SPEC_SHA256=
+            sha256sum eos-sdk-spec.zip | cut -d ' ' -f 1
+          } >> "$GITHUB_OUTPUT"
+
       - name: Get last release's archive
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.checksum_check }}
         id: latest-release
         uses: ayowel/download-release-assets@v1
         with:
           asset: eos-sdk-spec.zip
+          output: eos-sdk-spec-latest.zip
           require-release: false
 
-      - uses: marvinpinto/action-automatic-releases@v1.2.1
-        if: "${{ steps.latest-release.outputs.found == 'false' || steps.latest-release.outputs.asset-digest != format('sha256:{0}', needs.build.outputs.SDK_SPEC_DIGEST) }}"
+      - uses: softprops/action-gh-release@v2
+        if: "${{ steps.latest-release.outputs.found == 'false' || steps.latest-release.outputs.asset-digest != format('sha256:{0}', steps.info.outputs.SPEC_SHA256) }}"
         with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: "eos-${{ needs.build.outputs.SDK_VERSION }}-${{ github.sha }}"
-          title: "EOS SDK specs ${{ needs.build.outputs.SDK_VERSION }} (from ${{ github.sha }})"
-          description: |
+          tag_name: "eos-${{ needs.build.outputs.SDK_VERSION }}-${{ steps.info.outputs.GH_SHA }}"
+          name: "EOS SDK specs ${{ needs.build.outputs.SDK_VERSION }} (from ${{ steps.info.outputs.GH_SHA }})"
+          body: |
             Specs build for Epic Games' EOS SDK version ${{ needs.build.outputs.SDK_VERSION }} off commit ${{ github.sha }}.
 
-            | Asset              | SHA256                  | MD5                     |
-            | ------------------ | ----------------------- | ----------------------- |
-            | `eos-sdk-spec.zip` | `${{ env.SDK_SHA256 }}` | `${{ env.SDK_SHA256 }}` |
+            | Asset              | SHA256                   |
+            | ------------------ | ------------------------ |
+            | `eos-sdk-spec.zip` | `${{ steps.info.outputs.SPEC_SHA256 }}` |
+          generate_release_notes: true
+          prerelease: false
+          fail_on_unmatched_files: true
           files: |
             eos-sdk-spec.zip
