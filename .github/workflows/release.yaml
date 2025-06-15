@@ -8,7 +8,7 @@ on:
         default: true
         type: boolean
   schedule:
-    - cron: "* * */7 * *" # Run cron weekly to create a release upon SDK changes by Epic Games
+    - cron: "0 0 */7 * *" # Run cron weekly to create a release upon SDK changes by Epic Games
 
 jobs:
   build:
