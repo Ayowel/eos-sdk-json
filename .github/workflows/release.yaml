@@ -1,0 +1,96 @@
+name: Release
+run-name: "Release ${{ github.event.release.tag_name }}"
+on:
+  workflow_dispatch:
+    inputs:
+      checksum_check:
+        description: Check against previous release for changes before release
+        default: true
+        type: boolean
+  schedule:
+    - cron: "* * */7 * *" # Run cron weekly to create a release upon SDK changes by Epic Games
+
+jobs:
+  build:
+    name: "Build SDK info"
+    runs-on: ubuntu-latest
+    outputs:
+      SDK_VERSION: ${{ steps.sdk-download.outputs.SDK_VERSION }}
+      SDK_PATH: ${{ steps.sdk-download.outputs.SDK_PATH }}
+      SDK_URL: ${{ steps.sdk-download.outputs.SDK_URL }}
+      SDK_SPEC_DIGEST: ${{ steps.artifact.outputs.artifact-digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3'
+          cache: 'pip'
+
+      - name: 'Download SDK'
+        id: sdk-download
+        run: |
+          set -eo pipefail
+
+          mkdir -p target/spec
+          sdk_info="$( ./scripts/get_sdk.sh target )"
+          sdk_version="$(cut -d '|' -f 1 <<<"${sdk_info}")"
+          sdk_path="$(cut -d '|' -f 2 <<<"${sdk_info}")"
+          sdk_url="$(cut -d '|' -f 3 <<<"${sdk_info}")"
+          echo "SDK_VERSION=${sdk_version}" >> "$GITHUB_OUTPUT"
+          echo "SDK_PATH=${sdk_path}" >> "$GITHUB_OUTPUT"
+          echo "SDK_URL=${sdk_url}" >> "$GITHUB_OUTPUT"
+
+          unzip -d "target/SDK_${sdk_version}" "${sdk_path}" 'SDK/Include/*'
+          ./scripts/build.py "target/SDK_${sdk_version}" "target/spec/EOS_SDK-${sdk_version}.json"
+
+      - name: Install release dependencies
+        run: pip install repzip
+
+      - name: Build SDK signatures archive
+        working-directory: target
+        run : repzip --perm 440 eos-sdk-spec.zip 'spec/*.json'
+
+      - name: Archive specs
+        uses: actions/upload-artifact@v4
+        id: artifact
+        with:
+          name: SDK-spec
+          path: target/eos-sdk-spec.zip
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    name: Release SDK specs
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download built specs archive
+        uses: actions/download-artifact@v4
+        with:
+          name: SDK-spec
+          path: .
+ 
+      - name: Get last release's archive
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.checksum_check }}
+        id: latest-release
+        uses: ayowel/download-release-assets@v1
+        with:
+          asset: eos-sdk-spec.zip
+          require-release: false
+
+      - uses: marvinpinto/action-automatic-releases@v1.2.1
+        if: "${{ steps.latest-release.outputs.found == 'false' || steps.latest-release.outputs.asset-digest != format('sha256:{0}', needs.build.outputs.SDK_SPEC_DIGEST) }}"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: "eos-${{ needs.build.outputs.SDK_VERSION }}-${{ github.sha }}"
+          title: "EOS SDK specs ${{ needs.build.outputs.SDK_VERSION }} (from ${{ github.sha }})"
+          description: |
+            Specs build for Epic Games' EOS SDK version ${{ needs.build.outputs.SDK_VERSION }} off commit ${{ github.sha }}.
+
+            | Asset              | SHA256                  | MD5                     |
+            | ------------------ | ----------------------- | ----------------------- |
+            | `eos-sdk-spec.zip` | `${{ env.SDK_SHA256 }}` | `${{ env.SDK_SHA256 }}` |
+          files: |
+            eos-sdk-spec.zip
