@@ -30,7 +30,7 @@ def absorb_comment(lines, i, line = '/*'):
             last_comment = f"{last_comment}\n{line_content}"
         else:
             last_comment = line_content
-    line = line.split('*/')[0].strip()
+    line = line.split('*/')[0].rstrip('*').strip()
     if last_comment:
         last_comment = f"{last_comment}\n{line}"
     else:
