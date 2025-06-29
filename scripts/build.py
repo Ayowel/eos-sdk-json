@@ -123,9 +123,24 @@ def index_sdk_directory(dir_path):
     for f in files_order:
         content = files_index[f]
         i = 0
+        last_file_comment = ''
         while i < len(content):
             line = content[i]
             i += 1
+            if not line.startswith('/*'):
+                last_file_comment = ''
+            else:
+                eof_reached = False
+                while line.startswith('/*'):
+                    (i, last_file_comment) = absorb_comment(content, i, line)
+                    if i >= len(content):
+                        eof_reached = True
+                        break
+                    line = content[i]
+                    i += 1
+                if eof_reached:
+                    continue
+
             if line.startswith('#define'):
                 definfo = re.match('^#define[ \t]+(?P<defname>[^ \t(]+)([ \t(]*(?P<params>\\([^()])\\))?[ \t(](?P<expr>.*)$', line)
                 assert definfo
@@ -135,6 +150,7 @@ def index_sdk_directory(dir_path):
                 assert defname not in defines
                 if defname not in DEFINES_IGNORE_LIST:
                     defines[defname] = dict(
+                        comment = last_file_comment,
                         expression = expr,
                         name = defname,
                         parameters = params,
@@ -149,6 +165,7 @@ def index_sdk_directory(dir_path):
                 params = funcinfo['params'].strip()
                 assert funcname not in functions
                 functions[funcname] = dict(
+                    comment = last_file_comment,
                     methodname_flat = funcname,
                     params = [*explode_parameters(params)] if params != 'void' and params != '' else [],
                     returntype = retval,
@@ -164,6 +181,7 @@ def index_sdk_directory(dir_path):
                 assert cbname not in callbacks
                 callbacks[cbname] = dict(
                     callbackname = cbname,
+                    comment = last_file_comment,
                     params = [*explode_parameters(params)],
                     returntype = rettype,
                     source = f,
@@ -182,6 +200,7 @@ def index_sdk_directory(dir_path):
                 assert callbackinfo
                 assert callbackinfo['name'] not in callbacks
                 callbacks[callbackinfo['name']] = dict(
+                    comment = last_file_comment,
                     params = [p.strip() for p in callbackinfo['params'].lstrip(',').split(',')],
                     rettype = callbackinfo['rettype'],
                 )
@@ -235,6 +254,7 @@ def index_sdk_directory(dir_path):
                 assert end_found
 
                 structs[struct_name] = dict(
+                    comment = last_file_comment,
                     fields = struct_attrs,
                     source = f,
                     struct = struct_name,
@@ -309,19 +329,23 @@ def index_sdk_directory(dir_path):
                     enums['EOS_UI_EInputStateButtonFlags']['values'][effective_name] = value
                 else:
                     assert False
+
             elif line.startswith('typedef') or line.startswith('EOS_EXTERN_C'):
                 definfo = re.match('^(?P<extern>EOS_EXTERN_C )?typedef (?P<type>.+) ((?P<name>[a-zA-Z0-9_]+)|(?P<signature>\\(.*\\* *(?P<name2>[a-zA-Z0-9_]+)\\)\\(.*\\)));$', line)
                 assert definfo
                 defname = definfo['name'] or definfo['name2'].strip()
                 assert (defname) not in defines
                 typedefs[defname] = dict(
+                    comment = last_file_comment,
                     extern = definfo['extern'] is not None,
                     name = defname,
                     source = f,
                     type = definfo['type'].strip() + (definfo['signature'].replace(defname if f" {defname}" not in definfo['signature'] else f" {defname}", '', 1) if definfo['signature'] is not None else ''),
                 )
+
             else:
                 pass
+
     return dict(
         callback_methods = [*callbacks.values()],
         defines = [*defines.values()],
