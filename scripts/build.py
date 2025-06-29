@@ -245,11 +245,18 @@ def index_sdk_directory(dir_path):
                     if is_comment:
                         (i, last_comment) = absorb_comment(content, i, line)
                     elif declinfo:
-                        struct_attrs.append(dict(
+                        attribute_info = dict(
                             comment = last_comment,
                             name = declinfo['name'],
+                            recommended_value = None,
                             type = declinfo['type'],
-                        ))
+                        )
+                        comment_info = re.search(': Set this to (?P<value>[^.\r\n]+)([.\r\n]|$)', last_comment)
+                        if comment_info:
+                            attribute_info['recommended_value'] = comment_info['value']
+                        else:
+                            del attribute_info['recommended_value']
+                        struct_attrs.append(attribute_info)
                         last_comment = ''
                 assert end_found
 
