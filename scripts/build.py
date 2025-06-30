@@ -381,9 +381,25 @@ def index_sdk_directory(dir_path):
         typedefs = [*typedefs.values()],
     )
 
+def sort_list_items(data):
+    """Helper function to sort alphabetically the dicts in a list"""
+    return [
+        sort_dict(l) if isinstance(l, dict) else (
+            sort_list_items(l) if isinstance(l, (list, tuple)) else l
+        ) for l in data
+    ]
+
+def sort_dict(data):
+    """Helper function to input alphabetically the keys of a dict"""
+    return dict(
+        (k, sort_dict(v) if isinstance(v, dict) else (
+            sort_list_items(v) if isinstance(v, (list, tuple)) else v
+        )) for k, v in sorted(data.items())
+    )
+
 if __name__ == '__main__':
     import sys
-    def main(sdk_dir, output_file):
+    def main(sdk_dir, output_file, metadata = None):
         """Entrypoint"""
         assert os.path.isdir(sdk_dir)
         if output_file != '-':
@@ -396,7 +412,10 @@ if __name__ == '__main__':
                 sdk_dir = os.path.join(sdk_dir, 'SDK')
             sdk_dir = os.path.join(sdk_dir, 'Include')
 
-        json_index = index_sdk_directory(sdk_dir)
+        json_index = dict()
+        if metadata:
+            json_index['metadata'] = sort_dict(metadata)
+        json_index.update(index_sdk_directory(sdk_dir))
         index_string = json.dumps(json_index, indent = 2)
 
         if output_file == '-':
@@ -406,7 +425,7 @@ if __name__ == '__main__':
                 f.write(index_string)
         return 0
 
-    if len(sys.argv) != 3 or '-h' in sys.argv or '--help' in sys.argv:
+    if len(sys.argv) not in (3, 4) or '-h' in sys.argv or '--help' in sys.argv:
         print("This script must be given the SDK path as first argument and the desired output file path as second argument")
         sys.exit(1)
-    sys.exit(main(sys.argv[1], sys.argv[2]) or 0)
+    sys.exit(main(sys.argv[1], sys.argv[2], json.loads(sys.argv[3] if len(sys.argv) > 3 else '{}')) or 0)
