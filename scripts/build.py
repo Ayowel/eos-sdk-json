@@ -23,13 +23,13 @@ def absorb_comment(lines, i, line = '/*'):
     line = line[2:].lstrip('*').strip()
     last_comment = ''
     while '*/' not in line:
-        line = lines[i].strip()
-        i += 1
         line_content = line.lstrip('*').lstrip()
         if last_comment:
             last_comment = f"{last_comment}\n{line_content}"
         else:
             last_comment = line_content
+        line = lines[i].strip()
+        i += 1
     line = line.split('*/')[0].rstrip('*').strip()
     if last_comment:
         last_comment = f"{last_comment}\n{line}"
