@@ -35,7 +35,7 @@ def absorb_comment(lines, i, line = '/*'):
         last_comment = f"{last_comment}\n{line}"
     else:
         last_comment = line
-    return (i, last_comment)
+    return (i, last_comment.rstrip('\n'))
 
 def explode_parameters(line):
     for param in line.split(','):
