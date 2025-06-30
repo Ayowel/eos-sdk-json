@@ -43,8 +43,11 @@ jobs:
           echo "SDK_PATH=${sdk_path}" >> "$GITHUB_OUTPUT"
           echo "SDK_URL=${sdk_url}" >> "$GITHUB_OUTPUT"
 
+          sdk_checksum="$(sha256sum "${sdk_path}" | cut -d ' ' -f 1)"
+          echo "SDK_CHECKSUM=${sdk_checksum}" >> "$GITHUB_OUTPUT"
+
           unzip -d "target/SDK_${sdk_version}" "${sdk_path}" 'SDK/Include/*'
-          ./scripts/build.py "target/SDK_${sdk_version}" "target/spec/EOS_SDK-${sdk_version}.json"
+          ./scripts/build.py "target/SDK_${sdk_version}" "target/spec/EOS_SDK-${sdk_version}.json" "{\"checksum\": {\"sha256\": \"${sdk_checksum}\"}, \"source_url\": \"${sdk_url}\", \"version\": \"${sdk_version}\"}"
 
       - name: Install release dependencies
         run: pip install repzip
