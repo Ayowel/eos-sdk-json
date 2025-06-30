@@ -404,6 +404,7 @@ if __name__ == '__main__':
         else:
             with open(output_file, 'w', encoding = 'utf8') as f:
                 f.write(index_string)
+        return 0
 
     if len(sys.argv) != 3 or '-h' in sys.argv or '--help' in sys.argv:
         print("This script must be given the SDK path as first argument and the desired output file path as second argument")
