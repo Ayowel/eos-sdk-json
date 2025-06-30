@@ -19,6 +19,14 @@ DEFINES_IGNORE_LIST = set((
     ))
 
 def absorb_comment(lines, i, line = '/*'):
+    """
+    Get a comment string from a list of lines.
+    This only works for multiline comments and only one multiline comment per line is supported.
+
+    :param lines: the list of lines to process
+    :param i: The index of the next line
+    :param line: The content of the line where a comment's start was found
+    """
     assert line.startswith('/*')
     line = line[2:].lstrip('*').strip()
     last_comment = ''
@@ -38,6 +46,13 @@ def absorb_comment(lines, i, line = '/*'):
     return (i, last_comment.rstrip('\n'))
 
 def explode_parameters(line):
+    """
+    Turn a parameters string into an iterator over the line's parameters.
+    The provided string should correspond to the charaters between the function's parenthesis.
+
+    :param line: The parameters section of a function
+    :return: An iterator over a list of param dicts with 'name' and 'type' keys
+    """
     for param in line.split(','):
         param_splitted = param.strip().split(' ')
         param_name = param_splitted[-1]
