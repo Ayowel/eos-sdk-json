@@ -85,6 +85,250 @@ def explode_parameters(line):
         param_type = ' '.join(param_splitted[0:-1]).strip()
         yield dict(name = param_name, type = param_type)
 
+def parse_define(content, i, line, comment = '', file = ''):
+    """Extract a #define's content from a list of lines"""
+    (i, def_lines) = absorb_directive(content, i, line)
+    definfo = re.match('^#define[ \t]+(?P<defname>[^ \t(]+)([ \t(]*(?P<params>\\([^()])\\))?[ \t(](?P<expr>(.|\n)*)$', def_lines)
+    assert definfo
+    defname = definfo['defname'].strip()
+    params = definfo['params'].strip() if definfo['params'] is not None else None
+    expr = definfo['expr'].strip()
+    return (i, dict(
+            comment = comment,
+            expression = expr,
+            name = defname,
+            parameters = params,
+            source = file,
+    ))
+
+def parse_function(content, i, line, comment = '', file = ''):
+    """Extract a function's signature from a list of lines"""
+    _ = content
+    funcinfo = re.match('^EOS_DECLARE_FUNC\\((?P<retval>[^)]+)\\) *(?P<funcname>[a-zA-Z0-9_]+)\\((?P<params>.*)\\);$', line)
+    assert funcinfo
+    retval = funcinfo['retval'].strip()
+    funcname = funcinfo['funcname'].strip()
+    params = funcinfo['params'].strip()
+    return (i, dict(
+        comment = comment,
+        methodname_flat = funcname,
+        params = [*explode_parameters(params)] if params not in ('void', '') else [],
+        returntype = retval,
+        source = file,
+    ))
+
+def parse_callback(content, i, line, comment = '', file = ''):
+    """Extract a callback's signature from a list of lines"""
+    _ = content
+    cbinfo = re.match('^(EOS_DECLARE_CALLBACK\\(|EOS_DECLARE_CALLBACK_RETVALUE\\((?P<rettype>[^,]+), *)(?P<cbname>[a-zA-Z0-9_]+),?(?P<params>.*)\\);$', line)
+    assert cbinfo
+    rettype = cbinfo['rettype'].strip() if cbinfo['rettype'] is not None else 'void'
+    cbname = cbinfo['cbname'].strip()
+    params = cbinfo['params'].strip()
+    return (i, dict(
+        callbackname = cbname,
+        comment = comment,
+        params = [*explode_parameters(params)],
+        returntype = rettype,
+        source = file,
+    ))
+
+def parse_struct(content, i, line, comment = '', file = ''):
+    """Extract a struct's signature from a list of lines"""
+    structinfo = re.match('^EOS_STRUCT\\((?P<name>[a-zA-Z0-9_]+), *\\($', line)
+    assert structinfo
+    struct_attrs = []
+    end_found = False
+    last_comment = ''
+
+    while i < len(content):
+        line = content[i].strip()
+        i += 1
+        if line == '':
+            continue
+        if line == '));':
+            end_found = True
+            break
+
+        if line == 'union':
+            union_content = ''
+            while i < len(content):
+                line = content[i].strip()
+                i += 1
+                if line.startswith('}'):
+                    lineinfo = re.match('^} (?P<name>[a-zA-Z_]+);$', line)
+                    assert lineinfo
+                    struct_attrs.append(dict(
+                        fieldcomment = last_comment,
+                        fieldname = lineinfo['name'],
+                        fieldtype = f"union\n{union_content}\n\u007d",
+                    ))
+                    last_comment = ''
+                    break
+                union_content = f"{union_content}\n{line}"
+            continue
+
+        is_comment = line.startswith('/*')
+        declinfo = re.match('^(?P<type>.*) (?P<name>[a-zA-Z0-9_[\\]]+);', line)
+        assert is_comment or declinfo
+        if is_comment:
+            (i, last_comment) = absorb_comment(content, i, line)
+        elif declinfo:
+            attribute_info = dict(
+                comment = last_comment,
+                name = declinfo['name'],
+                recommended_value = None,
+                type = declinfo['type'],
+            )
+            comment_info = re.search(': Set this to (?P<value>[^.\r\n]+)([.\r\n]|$)', last_comment)
+            if comment_info:
+                attribute_info['recommended_value'] = comment_info['value']
+            else:
+                del attribute_info['recommended_value']
+            struct_attrs.append(attribute_info)
+            last_comment = ''
+    assert end_found
+
+    return (i, dict(
+        comment = comment,
+        fields = struct_attrs,
+        source = file,
+        struct = structinfo['name'],
+    ))
+
+def parse_enum(content, i, line, comment = '', file = ''):
+    """Extract an enum's content from a list of lines"""
+    enuminfo = re.match('^EOS_ENUM\\((?P<name>[a-zA-Z0-9_]+), *$', line)
+    assert enuminfo
+    enum_name = enuminfo['name']
+    enum_attrs = dict()
+
+    last_enum_value = -1
+    last_comment = ''
+    end_found = False
+    while i < len(content):
+        line = content[i].strip()
+        i += 1
+        if line == '':
+            continue
+        if line == ');':
+            end_found = True
+            break
+
+        is_comment = '/*' in line
+        declinfo = re.match('^(?P<name>[a-zA-Z0-9_]+)( *= *(?P<value>[x0-9a-f()< ]+))?,?$', line)
+        assert is_comment or declinfo
+        if is_comment:
+            (i, last_comment) = absorb_comment(content, i, line)
+        elif declinfo:
+            assert declinfo['name'] not in enum_attrs
+            if declinfo['value'] is not None:
+                last_enum_value = declinfo['value']
+            else:
+                last_enum_value = str(int(last_enum_value) + 1)
+            enum_value = str(last_enum_value)
+            enum_attrs[declinfo['name']] = dict(
+                comment = last_comment,
+                name = declinfo['name'],
+                value = enum_value,
+            )
+            last_comment = ''
+        else:
+            last_comment = ''
+    assert end_found
+    return (i, dict(
+        enumname = enum_name,
+        source = file,
+        values = enum_attrs,
+    ))
+
+def parse_ui_enum(i, line, comment = '', file = '', enum_last_index = 0):
+    """Extract an ui enum's content from a list of lines"""
+    if file == 'eos_ui_keys.h':
+        valinfo = re.match('^(?P<macro>EOS_UI_KEY([_A-Z]+))\\((?P<prefix>[a-zA-Z0-9_]+), (?P<name>[a-zA-Z0-9_]+)(, (?P<value>.+))?\\)$', line)
+        assert valinfo
+        macro = valinfo['macro'].strip()
+        prefix = valinfo['prefix'].strip()
+        name = valinfo['name'].strip()
+        value = valinfo['value'].strip() if valinfo['value'] is not None else None
+        if value is None:
+            assert macro in ('EOS_UI_KEY_ENTRY', 'EOS_UI_KEY_CONSTANT_LAST')
+            enum_last_index += 1
+            value = f"{enum_last_index}"
+        if macro == 'EOS_UI_KEY_ENTRY_FIRST':
+            enum_last_index = int(value)
+        effective_name = prefix + name
+        return (i, 'EOS_UI_EKeyCombination', enum_last_index, dict(
+            comment = comment,
+            name = effective_name,
+            value = value,
+        ))
+    if file == 'eos_ui_buttons.h':
+        valinfo = re.match('^(?P<macro>EOS_UI_KEY([_A-Z]+))\\((?P<prefix>[a-zA-Z0-9_]+), (?P<name>[a-zA-Z0-9_]+), (?P<value>.+)\\)$', line)
+        assert valinfo
+        macro = valinfo['macro'].strip()
+        prefix = valinfo['prefix'].strip()
+        name = valinfo['name'].strip()
+        value = valinfo['value'].strip()
+        effective_name = prefix + name
+        return (i, 'EOS_UI_EInputStateButtonFlags', enum_last_index, dict(
+            comment = comment,
+            name = effective_name,
+            value = value,
+        ))
+    assert False
+
+def build_header_file_index(dir_path):
+    """Load the content of all header files in a directory."""
+    files_index = {}
+    for path, dirs, files in os.walk(dir_path):
+        dirs.sort()
+        for file in sorted(files):
+            assert file not in files_index
+            if not file.endswith('.h'):
+                continue
+            with open(os.path.join(path, file), 'r', encoding='utf8') as handle:
+                files_index[file] = handle.readlines()
+    return files_index
+
+def build_file_read_order(files_index):
+    """From a list of header files, determine in which order they should be parsed."""
+    # List includes for each files
+    files_priority = dict()
+    for file, content in files_index.items():
+        includes = set()
+        for line in content:
+            if line.startswith('#include '):
+                included = re.match('^#include +(?P<path>[^ ]+)$', line)
+                assert included
+                path = included['path'].strip()
+                if path.startswith('"') and path.endswith('"'):
+                    if path.endswith('.h"'):
+                        assert path[1:-1] in files_index
+                        includes.add(path[1:-1])
+                elif (path.startswith('<') and path.endswith('>')) or re.match('^[a-zA-Z0-9_]+$', path):
+                    pass
+                else:
+                    assert False
+        files_priority[file] = includes
+
+    # Sort in inclusion order
+    files_order = []
+    while files_priority:
+        to_pop = []
+        for filename, included_files in files_priority.items():
+            new_v = included_files - set(files_order)
+            if len(new_v) == 0:
+                files_order.append(filename)
+                to_pop.append(filename)
+                continue
+            if len(new_v) != len(included_files):
+                files_priority[filename] = new_v
+        for filename in to_pop:
+            files_priority.pop(filename)
+
+    return files_order
+
 def index_sdk_directory(dir_path):
     """
     Parse the Epic Games SDK's library to generate an index of its declarations.
@@ -96,73 +340,33 @@ def index_sdk_directory(dir_path):
     typedefs = {}
     enums = dict(
         EOS_EResult = dict(
+            enumname = 'EOS_EResult',
             values = dict(),
             source = 'eos_common.h',
         ),
         EOS_UI_EKeyCombination = dict(
+            enumname = 'EOS_UI_EKeyCombination',
             source = 'eos_ui_keys.h',
             values = dict(),
         ),
         EOS_UI_EInputStateButtonFlags = dict(
+            enumname = 'EOS_UI_EInputStateButtonFlags',
             source = 'eos_ui_buttons.h',
             values = dict(),
         ),
     )
     enum_last_index = 0
-    files_index = dict()
-    for path, dirs, files in os.walk(dir_path):
-        dirs.sort()
-        for f in sorted(files):
-            assert f not in files_index
-            if not f.endswith('.h'):
-                continue
-            with open(os.path.join(path, f), 'r', encoding='utf8') as h:
-                # content = h.readlines()
-                files_index[f] = h.readlines()
 
-    # List includes for each files
-    files_priority = dict()
-    for f, content in files_index.items():
-        includes = set()
-        for l in content:
-            if l.startswith('#include '):
-                included = re.match('^#include +(?P<path>[^ ]+)$', l)
-                assert included
-                path = included['path'].strip()
-                if path.startswith('"') and path.endswith('"'):
-                    if path.endswith('.h"'):
-                        assert path[1:-1] in files_index
-                        includes.add(path[1:-1])
-                elif path.startswith('<') and path.endswith('>'):
-                    pass
-                elif re.match('^[a-zA-Z0-9_]+$', path):
-                    pass
-                else:
-                    assert False
-        files_priority[f] = includes
-
-    # Sort in inclusion order
-    files_order = list()
-    while files_priority:
-        to_pop = list()
-        for k, v in files_priority.items():
-            new_v = v - set(files_order)
-            if len(new_v) == 0:
-                files_order.append(k)
-                to_pop.append(k)
-                continue
-            if len(new_v) != len(v):
-                files_priority[k] = new_v
-        for k in to_pop:
-            files_priority.pop(k)
-
+    # Index all headers
+    files_index = build_header_file_index(dir_path)
+    files_order = build_file_read_order(files_index)
     # Do not parse eos_base as it only profides multiple definitions of other defines
     assert 'eos_base.h' in files_order
     files_order.remove('eos_base.h')
 
     # Build API index
-    for f in files_order:
-        content = files_index[f]
+    for file in files_order:
+        content = files_index[file]
         i = 0
         last_file_comment = ''
         while i < len(content):
@@ -183,52 +387,20 @@ def index_sdk_directory(dir_path):
                     continue
 
             if line.startswith('#define'):
-                (i, def_lines) = absorb_directive(content, i, line)
-                definfo = re.match('^#define[ \t]+(?P<defname>[^ \t(]+)([ \t(]*(?P<params>\\([^()])\\))?[ \t(](?P<expr>(.|\n)*)$', def_lines)
-                definfo = re.match('^#define[ \t]+(?P<defname>[^ \t(]+)([ \t(]*(?P<params>\\([^()])\\))?[ \t(](?P<expr>(.|\n)*)$', line)
-                assert definfo
-                defname = definfo['defname'].strip()
-                params = definfo['params'].strip() if definfo['params'] is not None else None
-                expr = definfo['expr'].strip()
-                assert defname not in defines
-                if defname not in DEFINES_IGNORE_LIST:
-                    defines[defname] = dict(
-                        comment = last_file_comment,
-                        expression = expr,
-                        name = defname,
-                        parameters = params,
-                        source = f,
-                    )
+                (i, definition) = parse_define(content, i, line, last_file_comment, file)
+                assert definition['name'] not in defines
+                if definition['name'] not in DEFINES_IGNORE_LIST:
+                    defines[definition['name']] = definition
 
             elif line.startswith('EOS_DECLARE_FUNC'):
-                funcinfo = re.match('^EOS_DECLARE_FUNC\\((?P<retval>[^)]+)\\) *(?P<funcname>[a-zA-Z0-9_]+)\\((?P<params>.*)\\);$', line)
-                assert funcinfo
-                retval = funcinfo['retval'].strip()
-                funcname = funcinfo['funcname'].strip()
-                params = funcinfo['params'].strip()
-                assert funcname not in functions
-                functions[funcname] = dict(
-                    comment = last_file_comment,
-                    methodname_flat = funcname,
-                    params = [*explode_parameters(params)] if params != 'void' and params != '' else [],
-                    returntype = retval,
-                    source = f,
-                )
+                (i, definition) = parse_function(content, i, line, last_file_comment, file)
+                assert definition['methodname_flat'] not in functions
+                functions[definition['methodname_flat']] = definition
 
             elif line.startswith('EOS_DECLARE_CALLBACK'):
-                cbinfo = re.match('^(EOS_DECLARE_CALLBACK\\(|EOS_DECLARE_CALLBACK_RETVALUE\\((?P<rettype>[^,]+), *)(?P<cbname>[a-zA-Z0-9_]+),?(?P<params>.*)\\);$', line)
-                assert cbinfo
-                rettype = cbinfo['rettype'].strip() if cbinfo['rettype'] is not None else 'void'
-                cbname = cbinfo['cbname'].strip()
-                params = cbinfo['params'].strip()
-                assert cbname not in callbacks
-                callbacks[cbname] = dict(
-                    callbackname = cbname,
-                    comment = last_file_comment,
-                    params = [*explode_parameters(params)],
-                    returntype = rettype,
-                    source = f,
-                )
+                (i, definition) = parse_callback(content, i, line, last_file_comment, file)
+                assert definition['callbackname'] not in callbacks
+                callbacks[definition['callbackname']] = definition
 
             elif line.startswith('EOS_RESULT_VALUE'):
                 valinfo = re.match('^EOS_RESULT_VALUE(_LAST)?\\((?P<name>[a-zA-Z0-9_]+), (?P<value>[x0-9A-F]+)\\)$', line)
@@ -236,7 +408,11 @@ def index_sdk_directory(dir_path):
                 name = valinfo['name'].strip()
                 value = valinfo['value'].strip()
                 assert name not in enums['EOS_EResult']['values']
-                enums['EOS_EResult']['values'][name] = dict(comment = last_file_comment, value = value)
+                enums['EOS_EResult']['values'][name] = dict(
+                    comment = last_file_comment,
+                    name = name,
+                    value = value
+                )
 
             elif line.startswith('EOS_DECLARE_CALLBACK_RETVALUE'):
                 callbackinfo = re.match('^EOS_DECLARE_CALLBACK_RETVALUE\\((?P<rettype>[^),]+) (?P<name>[^),]+)(?P<params>,[^)]+)\\)', line)
@@ -249,148 +425,27 @@ def index_sdk_directory(dir_path):
                 )
 
             elif line.startswith('EOS_STRUCT'):
-                structinfo = re.match('^EOS_STRUCT\\((?P<name>[a-zA-Z0-9_]+), *\\($', line)
-                assert structinfo
-                struct_name = structinfo['name']
-                struct_attrs = list()
-                end_found = False
-                last_comment = ''
-
-                while i < len(content):
-                    line = content[i].strip()
-                    i += 1
-                    if line == '':
-                        continue
-                    elif line == '));':
-                        end_found = True
-                        break
-                    elif line == 'union':
-                        union_content = ''
-                        while i < len(content):
-                            line = content[i].strip()
-                            i += 1
-                            if line.startswith('}'):
-                                lineinfo = re.match('^} (?P<name>[a-zA-Z_]+);$', line)
-                                assert lineinfo
-                                struct_attrs.append(dict(
-                                    fieldcomment = last_comment,
-                                    fieldname = lineinfo['name'],
-                                    fieldtype = "union\n%s\n}" % union_content,
-                                ))
-                                last_comment = ''
-                                break
-                            union_content = f"{union_content}\n{line}"
-                        continue
-
-                    is_comment = line.startswith('/*')
-                    declinfo = re.match('^(?P<type>.*) (?P<name>[a-zA-Z0-9_[\\]]+);', line)
-                    assert is_comment or declinfo
-                    if is_comment:
-                        (i, last_comment) = absorb_comment(content, i, line)
-                    elif declinfo:
-                        attribute_info = dict(
-                            comment = last_comment,
-                            name = declinfo['name'],
-                            recommended_value = None,
-                            type = declinfo['type'],
-                        )
-                        comment_info = re.search(': Set this to (?P<value>[^.\r\n]+)([.\r\n]|$)', last_comment)
-                        if comment_info:
-                            attribute_info['recommended_value'] = comment_info['value']
-                        else:
-                            del attribute_info['recommended_value']
-                        struct_attrs.append(attribute_info)
-                        last_comment = ''
-                assert end_found
-
-                structs[struct_name] = dict(
-                    comment = last_file_comment,
-                    fields = struct_attrs,
-                    source = f,
-                    struct = struct_name,
-                )
+                (i, definition) = parse_struct(content, i, line, last_file_comment, file)
+                assert definition['struct'] not in structs
+                structs[definition['struct']] = definition
 
             elif line.startswith('EOS_ENUM_BOOLEAN_OPERATORS'):
                 pass
+
             elif line.startswith('EOS_ENUM_START') or line.startswith('EOS_ENUM_END'):
                 enuminfo = re.match('^EOS_ENUM_(START|END)\\((?P<name>[a-zA-Z_]+)\\);?$', line)
                 assert enuminfo
                 assert enuminfo['name'] in ('EOS_EResult', 'EOS_UI_EKeyCombination', 'EOS_UI_EInputStateButtonFlags')
-            elif line.startswith('EOS_ENUM'):
-                enuminfo = re.match('^EOS_ENUM\\((?P<name>[a-zA-Z0-9_]+), *$', line)
-                assert enuminfo
-                enum_name = enuminfo['name']
-                enum_attrs = dict()
-                assert enum_name not in enums
 
-                last_enum_value = -1
-                while i < len(content):
-                    line = content[i].strip()
-                    i += 1
-                    if line == '':
-                        continue
-                    elif line == ');':
-                        end_found = True
-                        break
-                    is_comment = '/*' in line
-                    declinfo = re.match('^(?P<name>[a-zA-Z0-9_]+)( *= *(?P<value>[x0-9a-f()< ]+))?,?$', line)
-                    assert is_comment or declinfo
-                    if is_comment:
-                        (i, last_comment) = absorb_comment(content, i, line)
-                    elif declinfo:
-                        assert declinfo['name'] not in enum_attrs
-                        if declinfo['value'] is not None:
-                            last_enum_value = declinfo['value']
-                        else:
-                            last_enum_value = str(int(last_enum_value) + 1)
-                        enum_value = str(last_enum_value)
-                        enum_attrs[declinfo['name']] = dict(
-                            value = enum_value,
-                            comment = last_comment,
-                        )
-                        last_comment = ''
-                    else:
-                        last_comment = ''
-                enums[enum_name] = dict(
-                    source = f,
-                    values = enum_attrs,
-                )
+            elif line.startswith('EOS_ENUM'):
+                (i, definition) = parse_enum(content, i, line, last_file_comment, file)
+                assert definition['enumname'] not in enums
+                enums[definition['enumname']] = definition
 
             elif line.startswith('EOS_UI_'):
-                if f == 'eos_ui_keys.h':
-                    valinfo = re.match('^(?P<macro>EOS_UI_KEY([_A-Z]+))\\((?P<prefix>[a-zA-Z0-9_]+), (?P<name>[a-zA-Z0-9_]+)(, (?P<value>.+))?\\)$', line)
-                    assert valinfo
-                    macro = valinfo['macro'].strip()
-                    prefix = valinfo['prefix'].strip()
-                    name = valinfo['name'].strip()
-                    value = valinfo['value'].strip() if valinfo['value'] is not None else None
-                    if value is None:
-                        assert macro == 'EOS_UI_KEY_ENTRY' or macro == 'EOS_UI_KEY_CONSTANT_LAST'
-                        enum_last_index += 1
-                        value = f"{enum_last_index}"
-                    if macro == 'EOS_UI_KEY_ENTRY_FIRST':
-                        enum_last_index = int(value)
-                    effective_name = prefix + name
-                    assert effective_name not in enums['EOS_UI_EKeyCombination']['values']
-                    enums['EOS_UI_EKeyCombination']['values'][effective_name] = dict(
-                        value = value,
-                        comment = last_file_comment,
-                    )
-                elif f == 'eos_ui_buttons.h':
-                    valinfo = re.match('^(?P<macro>EOS_UI_KEY([_A-Z]+))\\((?P<prefix>[a-zA-Z0-9_]+), (?P<name>[a-zA-Z0-9_]+), (?P<value>.+)\\)$', line)
-                    assert valinfo
-                    macro = valinfo['macro'].strip()
-                    prefix = valinfo['prefix'].strip()
-                    name = valinfo['name'].strip()
-                    value = valinfo['value'].strip()
-                    effective_name = prefix + name
-                    assert effective_name not in enums['EOS_UI_EInputStateButtonFlags']['values']
-                    enums['EOS_UI_EInputStateButtonFlags']['values'][effective_name] = dict(
-                        value = value,
-                        comment = last_file_comment,
-                    )
-                else:
-                    assert False
+                (i, parent, enum_last_index, definition) = parse_ui_enum(i, line, last_file_comment, file, enum_last_index)
+                assert definition['name'] not in enums[parent]['values']
+                enums[parent]['values'][definition['name']] = definition
 
             elif line.startswith('typedef') or line.startswith('EOS_EXTERN_C'):
                 definfo = re.match('^(?P<extern>EOS_EXTERN_C )?typedef (?P<type>.+) ((?P<name>[a-zA-Z0-9_]+)|(?P<signature>\\(.*\\* *(?P<name2>[a-zA-Z0-9_]+)\\)\\(.*\\)));$', line)
@@ -401,8 +456,12 @@ def index_sdk_directory(dir_path):
                     comment = last_file_comment,
                     extern = definfo['extern'] is not None,
                     name = defname,
-                    source = f,
-                    type = definfo['type'].strip() + (definfo['signature'].replace(defname if f" {defname}" not in definfo['signature'] else f" {defname}", '', 1) if definfo['signature'] is not None else ''),
+                    source = file,
+                    type = definfo['type'].strip() + (
+                        definfo['signature'].replace(
+                            defname if f" {defname}" not in definfo['signature'] else f" {defname}", '', 1
+                        ) if definfo['signature'] is not None else ''
+                    ),
                 )
 
             elif line.split(' ')[0].rstrip() in DIRECTIVES_IGNORE_LIST:
@@ -418,11 +477,7 @@ def index_sdk_directory(dir_path):
     return dict(
         callback_methods = [*callbacks.values()],
         defines = [*defines.values()],
-        enums = [dict(
-            enumname = n,
-            source = v['source'],
-            values = [sort_dict({"name": vk, **vv}) for vk, vv in v['values'].items()],
-            ) for n,v in enums.items()],
+        enums = [sort_dict(dict(values = [*v.pop('values').values()], **v)) for v in enums.values()],
         functions = [*functions.values()],
         structs = [*structs.values()],
         typedefs = [*typedefs.values()],
@@ -468,8 +523,8 @@ if __name__ == '__main__':
         if output_file == '-':
             print(index_string)
         else:
-            with open(output_file, 'w', encoding = 'utf8') as f:
-                f.write(index_string)
+            with open(output_file, 'w', encoding = 'utf8') as file_handle:
+                file_handle.write(index_string)
         return 0
 
     handler = logging.StreamHandler(sys.stderr)
