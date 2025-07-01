@@ -237,6 +237,7 @@ def parse_enum(content, i, line, comment = '', file = ''):
             last_comment = ''
     assert end_found
     return (i, dict(
+        comment = comment,
         enumname = enum_name,
         source = file,
         values = enum_attrs,
