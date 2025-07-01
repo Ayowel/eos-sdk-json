@@ -19,16 +19,22 @@ DEFINES_IGNORE_LIST = set((
     'EOS_UI_KEY_ENTRY', 'EOS_UI_KEY_CONSTANT_LAST'
     ))
 
+DIRECTIVES_IGNORE_LIST = (
+    '#pragma',  '#include',
+    '#if', '#else', '#endif', '#ifndef',
+    '#undef', '#error'
+)
+
 def absorb_comment(lines, i, line = '/*'):
     """
     Get a comment string from a list of lines.
     This only works for multiline comments and only one multiline comment per line is supported.
 
-    :param lines: the list of lines to process
+    :param lines: The list of lines to process
     :param i: The index of the next line
     :param line: The content of the line where a comment's start was found
     """
-    assert line.startswith('/*')
+    assert line.lstrip().startswith('/*')
     line = line[2:].lstrip('*').strip()
     last_comment = ''
     while '*/' not in line:
@@ -45,6 +51,21 @@ def absorb_comment(lines, i, line = '/*'):
     else:
         last_comment = line
     return (i, last_comment.rstrip('\n'))
+
+def absorb_directive(lines, i, line = '#'):
+    """
+    Get a directive string from a list of lines.
+
+    :param lines: The list of lines to process
+    :param i: The index of the next line
+    :param line: The content of the line where a directive's start was found
+    """
+    directive = ''
+    while line.rstrip('\n').endswith('\\'):
+        directive += line.replace('\\\n', '\n')
+        line = lines[i]
+        i+=1
+    return (i, directive + line)
 
 def explode_parameters(line):
     """
@@ -143,11 +164,11 @@ def index_sdk_directory(dir_path):
         while i < len(content):
             line = content[i]
             i += 1
-            if not line.startswith('/*'):
+            if not line.lstrip().startswith('/*'):
                 last_file_comment = ''
             else:
                 eof_reached = False
-                while line.startswith('/*'):
+                while line.lstrip().startswith('/*'):
                     (i, last_file_comment) = absorb_comment(content, i, line)
                     if i >= len(content):
                         eof_reached = True
@@ -158,7 +179,9 @@ def index_sdk_directory(dir_path):
                     continue
 
             if line.startswith('#define'):
-                definfo = re.match('^#define[ \t]+(?P<defname>[^ \t(]+)([ \t(]*(?P<params>\\([^()])\\))?[ \t(](?P<expr>.*)$', line)
+                (i, def_lines) = absorb_directive(content, i, line)
+                definfo = re.match('^#define[ \t]+(?P<defname>[^ \t(]+)([ \t(]*(?P<params>\\([^()])\\))?[ \t(](?P<expr>(.|\n)*)$', def_lines)
+                definfo = re.match('^#define[ \t]+(?P<defname>[^ \t(]+)([ \t(]*(?P<params>\\([^()])\\))?[ \t(](?P<expr>(.|\n)*)$', line)
                 assert definfo
                 defname = definfo['defname'].strip()
                 params = definfo['params'].strip() if definfo['params'] is not None else None
@@ -378,8 +401,15 @@ def index_sdk_directory(dir_path):
                     type = definfo['type'].strip() + (definfo['signature'].replace(defname if f" {defname}" not in definfo['signature'] else f" {defname}", '', 1) if definfo['signature'] is not None else ''),
                 )
 
-            else:
+            elif line.split(' ')[0].rstrip() in DIRECTIVES_IGNORE_LIST:
+                (i, _) = absorb_directive(content, i, line)
+
+            elif line.lstrip().startswith('//') or line.strip() == '':
                 pass
+
+            else:
+                print("Found unrecognized / unsupported prefix: {line}")
+                assert False
 
     return dict(
         callback_methods = [*callbacks.values()],
