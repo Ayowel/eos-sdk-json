@@ -4,8 +4,12 @@ Parse the Epic Games SDK's library to generate a JSON index of its declarations.
 """
 
 import json
-import re
+import logging
 import os
+import re
+
+logger = logging.getLogger()
+logger.setLevel(logging.WARNING)
 
 DEFINES_IGNORE_LIST = set((
     'EOS_BUILD_PLATFORM_HEADER_BASE',
@@ -408,7 +412,7 @@ def index_sdk_directory(dir_path):
                 pass
 
             else:
-                print("Found unrecognized / unsupported prefix: {line}")
+                logger.error("Found unrecognized / unsupported prefix: %s", line)
                 assert False
 
     return dict(
@@ -450,7 +454,7 @@ if __name__ == '__main__':
         if not os.path.exists(os.path.join(sdk_dir, 'eos_common.h')):
             if not os.path.exists(os.path.join(sdk_dir, 'Include', 'eos_common.h')):
                 if not os.path.exists(os.path.join(sdk_dir, 'SDK', 'Include', 'eos_common.h')):
-                    print(f'Could not find EOS C SDK in {sdk_dir}')
+                    logger.error('Could not find EOS C SDK in %s', sdk_dir)
                     return 1
                 sdk_dir = os.path.join(sdk_dir, 'SDK')
             sdk_dir = os.path.join(sdk_dir, 'Include')
@@ -468,7 +472,10 @@ if __name__ == '__main__':
                 f.write(index_string)
         return 0
 
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
     if len(sys.argv) not in (3, 4) or '-h' in sys.argv or '--help' in sys.argv:
-        print("This script must be given the SDK path as first argument and the desired output file path as second argument")
+        logger.error("This script must be given the SDK path as first argument and the desired output file path as second argument")
         sys.exit(1)
     sys.exit(main(sys.argv[1], sys.argv[2], json.loads(sys.argv[3] if len(sys.argv) > 3 else '{}')) or 0)
