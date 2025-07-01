@@ -209,7 +209,7 @@ def index_sdk_directory(dir_path):
                 name = valinfo['name'].strip()
                 value = valinfo['value'].strip()
                 assert name not in enums['EOS_EResult']['values']
-                enums['EOS_EResult']['values'][name] = value
+                enums['EOS_EResult']['values'][name] = dict(comment = last_file_comment, value = value)
 
             elif line.startswith('EOS_DECLARE_CALLBACK_RETVALUE'):
                 callbackinfo = re.match('^EOS_DECLARE_CALLBACK_RETVALUE\\((?P<rettype>[^),]+) (?P<name>[^),]+)(?P<params>,[^)]+)\\)', line)
@@ -309,7 +309,7 @@ def index_sdk_directory(dir_path):
                     declinfo = re.match('^(?P<name>[a-zA-Z0-9_]+)( *= *(?P<value>[x0-9a-f()< ]+))?,?$', line)
                     assert is_comment or declinfo
                     if is_comment:
-                        (i, _) = absorb_comment(content, i, line)
+                        (i, last_comment) = absorb_comment(content, i, line)
                     elif declinfo:
                         assert declinfo['name'] not in enum_attrs
                         if declinfo['value'] is not None:
@@ -317,7 +317,13 @@ def index_sdk_directory(dir_path):
                         else:
                             last_enum_value = str(int(last_enum_value) + 1)
                         enum_value = str(last_enum_value)
-                        enum_attrs[declinfo['name']] = enum_value
+                        enum_attrs[declinfo['name']] = dict(
+                            value = enum_value,
+                            comment = last_comment,
+                        )
+                        last_comment = ''
+                    else:
+                        last_comment = ''
                 enums[enum_name] = dict(
                     source = f,
                     values = enum_attrs,
@@ -339,7 +345,10 @@ def index_sdk_directory(dir_path):
                         enum_last_index = int(value)
                     effective_name = prefix + name
                     assert effective_name not in enums['EOS_UI_EKeyCombination']['values']
-                    enums['EOS_UI_EKeyCombination']['values'][effective_name] = value
+                    enums['EOS_UI_EKeyCombination']['values'][effective_name] = dict(
+                        value = value,
+                        comment = last_file_comment,
+                    )
                 elif f == 'eos_ui_buttons.h':
                     valinfo = re.match('^(?P<macro>EOS_UI_KEY([_A-Z]+))\\((?P<prefix>[a-zA-Z0-9_]+), (?P<name>[a-zA-Z0-9_]+), (?P<value>.+)\\)$', line)
                     assert valinfo
@@ -349,7 +358,10 @@ def index_sdk_directory(dir_path):
                     value = valinfo['value'].strip()
                     effective_name = prefix + name
                     assert effective_name not in enums['EOS_UI_EInputStateButtonFlags']['values']
-                    enums['EOS_UI_EInputStateButtonFlags']['values'][effective_name] = value
+                    enums['EOS_UI_EInputStateButtonFlags']['values'][effective_name] = dict(
+                        value = value,
+                        comment = last_file_comment,
+                    )
                 else:
                     assert False
 
@@ -375,7 +387,7 @@ def index_sdk_directory(dir_path):
         enums = [dict(
             enumname = n,
             source = v['source'],
-            values = [{"name": vk, "value": vv} for vk, vv in v['values'].items()],
+            values = [sort_dict({"name": vk, **vv}) for vk, vv in v['values'].items()],
             ) for n,v in enums.items()],
         functions = [*functions.values()],
         structs = [*structs.values()],
