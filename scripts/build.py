@@ -3,6 +3,7 @@
 Parse the Epic Games SDK's library to generate a JSON index of its declarations.
 """
 
+from collections import OrderedDict
 import json
 import logging
 import os
@@ -83,7 +84,7 @@ def explode_parameters(line):
         param_splitted = param.strip().split(' ')
         param_name = param_splitted[-1]
         param_type = ' '.join(param_splitted[0:-1]).strip()
-        yield dict(name = param_name, type = param_type)
+        yield OrderedDict(name = param_name, type = param_type)
 
 def parse_define(content, i, line, comment = '', file = ''):
     """Extract a #define's content from a list of lines"""
@@ -93,7 +94,7 @@ def parse_define(content, i, line, comment = '', file = ''):
     defname = definfo['defname'].strip()
     params = definfo['params'].strip() if definfo['params'] is not None else None
     expr = definfo['expr'].strip()
-    return (i, dict(
+    return (i, OrderedDict(
             comment = comment,
             expression = expr,
             name = defname,
@@ -109,7 +110,7 @@ def parse_function(content, i, line, comment = '', file = ''):
     retval = funcinfo['retval'].strip()
     funcname = funcinfo['funcname'].strip()
     params = funcinfo['params'].strip()
-    return (i, dict(
+    return (i, OrderedDict(
         comment = comment,
         methodname_flat = funcname,
         params = [*explode_parameters(params)] if params not in ('void', '') else [],
@@ -125,7 +126,7 @@ def parse_callback(content, i, line, comment = '', file = ''):
     rettype = cbinfo['rettype'].strip() if cbinfo['rettype'] is not None else 'void'
     cbname = cbinfo['cbname'].strip()
     params = cbinfo['params'].strip()
-    return (i, dict(
+    return (i, OrderedDict(
         callbackname = cbname,
         comment = comment,
         params = [*explode_parameters(params)],
@@ -158,7 +159,7 @@ def parse_struct(content, i, line, comment = '', file = ''):
                 if line.startswith('}'):
                     lineinfo = re.match('^} (?P<name>[a-zA-Z_]+);$', line)
                     assert lineinfo
-                    struct_attrs.append(dict(
+                    struct_attrs.append(OrderedDict(
                         fieldcomment = last_comment,
                         fieldname = lineinfo['name'],
                         fieldtype = f"union\n{union_content}\n\u007d",
@@ -174,7 +175,7 @@ def parse_struct(content, i, line, comment = '', file = ''):
         if is_comment:
             (i, last_comment) = absorb_comment(content, i, line)
         elif declinfo:
-            attribute_info = dict(
+            attribute_info = OrderedDict(
                 comment = last_comment,
                 name = declinfo['name'],
                 recommended_value = None,
@@ -189,7 +190,7 @@ def parse_struct(content, i, line, comment = '', file = ''):
             last_comment = ''
     assert end_found
 
-    return (i, dict(
+    return (i, OrderedDict(
         comment = comment,
         fields = struct_attrs,
         source = file,
@@ -201,7 +202,7 @@ def parse_enum(content, i, line, comment = '', file = ''):
     enuminfo = re.match('^EOS_ENUM\\((?P<name>[a-zA-Z0-9_]+), *$', line)
     assert enuminfo
     enum_name = enuminfo['name']
-    enum_attrs = dict()
+    enum_attrs = OrderedDict()
 
     last_enum_value = -1
     last_comment = ''
@@ -227,7 +228,7 @@ def parse_enum(content, i, line, comment = '', file = ''):
             else:
                 last_enum_value = str(int(last_enum_value) + 1)
             enum_value = str(last_enum_value)
-            enum_attrs[declinfo['name']] = dict(
+            enum_attrs[declinfo['name']] = OrderedDict(
                 comment = last_comment,
                 name = declinfo['name'],
                 value = enum_value,
@@ -236,7 +237,7 @@ def parse_enum(content, i, line, comment = '', file = ''):
         else:
             last_comment = ''
     assert end_found
-    return (i, dict(
+    return (i, OrderedDict(
         comment = comment,
         enumname = enum_name,
         source = file,
@@ -259,7 +260,7 @@ def parse_ui_enum(i, line, comment = '', file = '', enum_last_index = 0):
         if macro == 'EOS_UI_KEY_ENTRY_FIRST':
             enum_last_index = int(value)
         effective_name = prefix + name
-        return (i, 'EOS_UI_EKeyCombination', enum_last_index, dict(
+        return (i, 'EOS_UI_EKeyCombination', enum_last_index, OrderedDict(
             comment = comment,
             name = effective_name,
             value = value,
@@ -272,7 +273,7 @@ def parse_ui_enum(i, line, comment = '', file = '', enum_last_index = 0):
         name = valinfo['name'].strip()
         value = valinfo['value'].strip()
         effective_name = prefix + name
-        return (i, 'EOS_UI_EInputStateButtonFlags', enum_last_index, dict(
+        return (i, 'EOS_UI_EInputStateButtonFlags', enum_last_index, OrderedDict(
             comment = comment,
             name = effective_name,
             value = value,
@@ -295,7 +296,7 @@ def build_header_file_index(dir_path):
 def build_file_read_order(files_index):
     """From a list of header files, determine in which order they should be parsed."""
     # List includes for each files
-    files_priority = dict()
+    files_priority = OrderedDict()
     for file, content in files_index.items():
         includes = set()
         for line in content:
@@ -339,21 +340,21 @@ def index_sdk_directory(dir_path):
     callbacks = {}
     structs = {}
     typedefs = {}
-    enums = dict(
-        EOS_EResult = dict(
+    enums = OrderedDict(
+        EOS_EResult = OrderedDict(
             enumname = 'EOS_EResult',
-            values = dict(),
+            values = OrderedDict(),
             source = 'eos_common.h',
         ),
-        EOS_UI_EKeyCombination = dict(
+        EOS_UI_EKeyCombination = OrderedDict(
             enumname = 'EOS_UI_EKeyCombination',
             source = 'eos_ui_keys.h',
-            values = dict(),
+            values = OrderedDict(),
         ),
-        EOS_UI_EInputStateButtonFlags = dict(
+        EOS_UI_EInputStateButtonFlags = OrderedDict(
             enumname = 'EOS_UI_EInputStateButtonFlags',
             source = 'eos_ui_buttons.h',
-            values = dict(),
+            values = OrderedDict(),
         ),
     )
     enum_last_index = 0
@@ -409,7 +410,7 @@ def index_sdk_directory(dir_path):
                 name = valinfo['name'].strip()
                 value = valinfo['value'].strip()
                 assert name not in enums['EOS_EResult']['values']
-                enums['EOS_EResult']['values'][name] = dict(
+                enums['EOS_EResult']['values'][name] = OrderedDict(
                     comment = last_file_comment,
                     name = name,
                     value = value
@@ -419,7 +420,7 @@ def index_sdk_directory(dir_path):
                 callbackinfo = re.match('^EOS_DECLARE_CALLBACK_RETVALUE\\((?P<rettype>[^),]+) (?P<name>[^),]+)(?P<params>,[^)]+)\\)', line)
                 assert callbackinfo
                 assert callbackinfo['name'] not in callbacks
-                callbacks[callbackinfo['name']] = dict(
+                callbacks[callbackinfo['name']] = OrderedDict(
                     comment = last_file_comment,
                     params = [p.strip() for p in callbackinfo['params'].lstrip(',').split(',')],
                     rettype = callbackinfo['rettype'],
@@ -453,7 +454,7 @@ def index_sdk_directory(dir_path):
                 assert definfo
                 defname = definfo['name'] or definfo['name2'].strip()
                 assert (defname) not in defines
-                typedefs[defname] = dict(
+                typedefs[defname] = OrderedDict(
                     comment = last_file_comment,
                     extern = definfo['extern'] is not None,
                     name = defname,
@@ -475,10 +476,10 @@ def index_sdk_directory(dir_path):
                 logger.error("Found unrecognized / unsupported prefix: %s", line)
                 assert False
 
-    return dict(
+    return OrderedDict(
         callback_methods = [*callbacks.values()],
         defines = [*defines.values()],
-        enums = [sort_dict(dict(values = [*v.pop('values').values()], **v)) for v in enums.values()],
+        enums = [sort_dict(OrderedDict(values = [*v.pop('values').values()], **v)) for v in enums.values()],
         functions = [*functions.values()],
         structs = [*structs.values()],
         typedefs = [*typedefs.values()],
@@ -494,7 +495,7 @@ def sort_list_items(data):
 
 def sort_dict(data):
     """Helper function to input alphabetically the keys of a dict"""
-    return dict(
+    return OrderedDict(
         (k, sort_dict(v) if isinstance(v, dict) else (
             sort_list_items(v) if isinstance(v, (list, tuple)) else v
         )) for k, v in sorted(data.items())
@@ -515,7 +516,7 @@ if __name__ == '__main__':
                 sdk_dir = os.path.join(sdk_dir, 'SDK')
             sdk_dir = os.path.join(sdk_dir, 'Include')
 
-        json_index = dict()
+        json_index = OrderedDict()
         if metadata:
             json_index['metadata'] = sort_dict(metadata)
         json_index.update(index_sdk_directory(sdk_dir))
