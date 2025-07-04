@@ -4,6 +4,7 @@ Parse the Epic Games SDK's library to generate a JSON index of its declarations.
 """
 
 from collections import OrderedDict
+from functools import partial
 import json
 import logging
 import os
@@ -57,7 +58,7 @@ def absorb_comment(lines, i, line = '/*'):
         last_comment = line
     return (i, last_comment.rstrip('\n'))
 
-def absorb_directive(lines, i, line = '#'):
+def absorb_directive(lines, i, line = '#', comment = '', file = None):
     """
     Get a directive string from a list of lines.
 
@@ -65,6 +66,7 @@ def absorb_directive(lines, i, line = '#'):
     :param i: The index of the next line
     :param line: The content of the line where a directive's start was found
     """
+    _ = (comment, file)
     directive = ''
     while line.rstrip('\n').endswith('\\'):
         directive += line.replace('\\\n', '\n')
@@ -197,6 +199,19 @@ def parse_struct(content, i, line, comment = '', file = ''):
         struct = structinfo['name'],
     ))
 
+def parse_result_value(content, i, line, comment = '', file = ''):
+    """Extract an EOS_RESULT enum value from a list of lines"""
+    _ = (content, file)
+    valinfo = re.match('^EOS_RESULT_VALUE(_LAST)?\\((?P<name>[a-zA-Z0-9_]+), (?P<value>[x0-9A-F]+)\\)$', line)
+    assert valinfo
+    name = valinfo['name'].strip()
+    value = valinfo['value'].strip()
+    return (i, OrderedDict(
+        comment = comment,
+        name = name,
+        value = value
+    ))
+
 def parse_enum(content, i, line, comment = '', file = ''):
     """Extract an enum's content from a list of lines"""
     enuminfo = re.match('^EOS_ENUM\\((?P<name>[a-zA-Z0-9_]+), *$', line)
@@ -244,6 +259,14 @@ def parse_enum(content, i, line, comment = '', file = ''):
         values = enum_attrs,
     ))
 
+def parse_enum_start_end(content, i, line, comment = '', file = ''):
+    """Extract an enum start's name"""
+    _ = content
+    enuminfo = re.match('^EOS_ENUM_(START|END)\\((?P<name>[a-zA-Z_]+)\\);?$', line)
+    assert enuminfo
+    assert enuminfo['name'] in ('EOS_EResult', 'EOS_UI_EKeyCombination', 'EOS_UI_EInputStateButtonFlags')
+    return (i, OrderedDict(comment = comment, file = file, name = enuminfo['name']))
+
 def parse_ui_enum(i, line, comment = '', file = '', enum_last_index = 0):
     """Extract an ui enum's content from a list of lines"""
     if file == 'eos_ui_keys.h':
@@ -279,6 +302,29 @@ def parse_ui_enum(i, line, comment = '', file = '', enum_last_index = 0):
             value = value,
         ))
     assert False
+
+def parse_typedef(content, i, line, comment = '', file = ''):
+    """Extract a typedef's content from a list of lines"""
+    _ = (content, file)
+    definfo = re.match('^(?P<extern>EOS_EXTERN_C )?typedef (?P<type>.+) ((?P<name>[a-zA-Z0-9_]+)|(?P<signature>\\(.*\\* *(?P<name2>[a-zA-Z0-9_]+)\\)\\(.*\\)));$', line)
+    assert definfo
+    defname = definfo['name'] or definfo['name2'].strip()
+    return (i, OrderedDict(
+        comment = comment,
+        extern = definfo['extern'] is not None,
+        name = defname,
+        source = file,
+        type = definfo['type'].strip() + (
+            definfo['signature'].replace(
+                defname if f" {defname}" not in definfo['signature'] else f" {defname}", '', 1
+            ) if definfo['signature'] is not None else ''
+        ),
+    ))
+
+def parse_skip_line(content, i, line, comment = '', file = ''):
+    """Parse noop that only returns the received line index"""
+    _ = (content, line, comment, file)
+    return (i, None)
 
 def build_header_file_index(dir_path):
     """Load the content of all header files in a directory."""
@@ -331,7 +377,24 @@ def build_file_read_order(files_index):
 
     return files_order
 
-def index_sdk_directory(dir_path):
+def assert_insert(target, value_key, value):
+    """Ensure that a value is not already inserted before injecting it"""
+    assert value[value_key] not in target
+    target[value[value_key]] = value
+
+def assert_insert_if(target, ignores, value_key, value):
+    """Ensure that a value should not be ignored and is not already inserted before injecting it"""
+    if value[value_key] == 'EOS_AntiCheatClient_ReceiveMessageFromPeer':
+        assert False
+    if value[value_key] not in ignores:
+        assert value[value_key] not in target
+        target[value[value_key]] = value
+
+def noop(*args, **kwargs):
+    """Just do nothing"""
+    return (args, kwargs)
+
+def index_sdk_directory(dir_path): # pylint: disable=too-many-locals
     """
     Parse the Epic Games SDK's library to generate an index of its declarations.
     """
@@ -343,8 +406,8 @@ def index_sdk_directory(dir_path):
     enums = OrderedDict(
         EOS_EResult = OrderedDict(
             enumname = 'EOS_EResult',
-            values = OrderedDict(),
             source = 'eos_common.h',
+            values = OrderedDict(),
         ),
         EOS_UI_EKeyCombination = OrderedDict(
             enumname = 'EOS_UI_EKeyCombination',
@@ -357,7 +420,6 @@ def index_sdk_directory(dir_path):
             values = OrderedDict(),
         ),
     )
-    enum_last_index = 0
 
     # Index all headers
     files_index = build_header_file_index(dir_path)
@@ -366,115 +428,57 @@ def index_sdk_directory(dir_path):
     assert 'eos_base.h' in files_order
     files_order.remove('eos_base.h')
 
+    flags = [
+        ('EOS_DECLARE_FUNC', parse_function, partial(assert_insert, functions, 'methodname_flat')),
+        ('EOS_DECLARE_CALLBACK', parse_callback, partial(assert_insert, callbacks, 'callbackname')),
+        ('EOS_STRUCT', parse_struct, partial(assert_insert, structs, 'struct')),
+        ('EOS_RESULT_VALUE', parse_result_value, partial(assert_insert, enums['EOS_EResult']['values'], 'name')),
+        (('EOS_ENUM_START', 'EOS_ENUM_END'), parse_enum_start_end, noop),
+        ('EOS_ENUM_BOOLEAN_OPERATORS', parse_skip_line, noop),
+        ('EOS_ENUM', parse_enum, partial(assert_insert, enums, 'enumname')),
+        ('#define', parse_define, partial(assert_insert_if, defines, DEFINES_IGNORE_LIST, 'name')),
+        (('typedef', 'EOS_EXTERN_C'), parse_typedef, partial(assert_insert, typedefs, 'name')),
+        (DIRECTIVES_IGNORE_LIST, absorb_directive, noop)
+    ]
     # Build API index
     for file in files_order:
         content = files_index[file]
         i = 0
+        enum_last_index = 0
         last_file_comment = ''
         while i < len(content):
             line = content[i]
             i += 1
-            if not line.lstrip().startswith('/*'):
-                last_file_comment = ''
-            else:
-                eof_reached = False
+            last_file_comment = ''
+
+            if line.lstrip().startswith('/*'):
                 while line.lstrip().startswith('/*'):
                     (i, last_file_comment) = absorb_comment(content, i, line)
                     if i >= len(content):
-                        eof_reached = True
+                        i += 1
                         break
                     line = content[i]
                     i += 1
-                if eof_reached:
+                if i > len(content):
                     continue
 
-            if line.startswith('#define'):
-                (i, definition) = parse_define(content, i, line, last_file_comment, file)
-                assert definition['name'] not in defines
-                if definition['name'] not in DEFINES_IGNORE_LIST:
-                    defines[definition['name']] = definition
-
-            elif line.startswith('EOS_DECLARE_FUNC'):
-                (i, definition) = parse_function(content, i, line, last_file_comment, file)
-                assert definition['methodname_flat'] not in functions
-                functions[definition['methodname_flat']] = definition
-
-            elif line.startswith('EOS_DECLARE_CALLBACK'):
-                (i, definition) = parse_callback(content, i, line, last_file_comment, file)
-                assert definition['callbackname'] not in callbacks
-                callbacks[definition['callbackname']] = definition
-
-            elif line.startswith('EOS_RESULT_VALUE'):
-                valinfo = re.match('^EOS_RESULT_VALUE(_LAST)?\\((?P<name>[a-zA-Z0-9_]+), (?P<value>[x0-9A-F]+)\\)$', line)
-                assert valinfo
-                name = valinfo['name'].strip()
-                value = valinfo['value'].strip()
-                assert name not in enums['EOS_EResult']['values']
-                enums['EOS_EResult']['values'][name] = OrderedDict(
-                    comment = last_file_comment,
-                    name = name,
-                    value = value
-                )
-
-            elif line.startswith('EOS_DECLARE_CALLBACK_RETVALUE'):
-                callbackinfo = re.match('^EOS_DECLARE_CALLBACK_RETVALUE\\((?P<rettype>[^),]+) (?P<name>[^),]+)(?P<params>,[^)]+)\\)', line)
-                assert callbackinfo
-                assert callbackinfo['name'] not in callbacks
-                callbacks[callbackinfo['name']] = OrderedDict(
-                    comment = last_file_comment,
-                    params = [p.strip() for p in callbackinfo['params'].lstrip(',').split(',')],
-                    rettype = callbackinfo['rettype'],
-                )
-
-            elif line.startswith('EOS_STRUCT'):
-                (i, definition) = parse_struct(content, i, line, last_file_comment, file)
-                assert definition['struct'] not in structs
-                structs[definition['struct']] = definition
-
-            elif line.startswith('EOS_ENUM_BOOLEAN_OPERATORS'):
-                pass
-
-            elif line.startswith('EOS_ENUM_START') or line.startswith('EOS_ENUM_END'):
-                enuminfo = re.match('^EOS_ENUM_(START|END)\\((?P<name>[a-zA-Z_]+)\\);?$', line)
-                assert enuminfo
-                assert enuminfo['name'] in ('EOS_EResult', 'EOS_UI_EKeyCombination', 'EOS_UI_EInputStateButtonFlags')
-
-            elif line.startswith('EOS_ENUM'):
-                (i, definition) = parse_enum(content, i, line, last_file_comment, file)
-                assert definition['enumname'] not in enums
-                enums[definition['enumname']] = definition
-
-            elif line.startswith('EOS_UI_'):
-                (i, parent, enum_last_index, definition) = parse_ui_enum(i, line, last_file_comment, file, enum_last_index)
-                assert definition['name'] not in enums[parent]['values']
-                enums[parent]['values'][definition['name']] = definition
-
-            elif line.startswith('typedef') or line.startswith('EOS_EXTERN_C'):
-                definfo = re.match('^(?P<extern>EOS_EXTERN_C )?typedef (?P<type>.+) ((?P<name>[a-zA-Z0-9_]+)|(?P<signature>\\(.*\\* *(?P<name2>[a-zA-Z0-9_]+)\\)\\(.*\\)));$', line)
-                assert definfo
-                defname = definfo['name'] or definfo['name2'].strip()
-                assert (defname) not in defines
-                typedefs[defname] = OrderedDict(
-                    comment = last_file_comment,
-                    extern = definfo['extern'] is not None,
-                    name = defname,
-                    source = file,
-                    type = definfo['type'].strip() + (
-                        definfo['signature'].replace(
-                            defname if f" {defname}" not in definfo['signature'] else f" {defname}", '', 1
-                        ) if definfo['signature'] is not None else ''
-                    ),
-                )
-
-            elif line.split(' ')[0].rstrip() in DIRECTIVES_IGNORE_LIST:
-                (i, _) = absorb_directive(content, i, line)
-
-            elif line.lstrip().startswith('//') or line.strip() == '':
-                pass
-
+            for (linestart, callback, registrar) in flags:
+                if any(line.startswith(s) for s in ((linestart,) if isinstance(linestart, str) else linestart)):
+                    (i, definition) = callback(content, i, line, last_file_comment, file)
+                    registrar(definition)
+                    break
             else:
-                logger.error("Found unrecognized / unsupported prefix: %s", line)
-                assert False
+                if line.startswith('EOS_UI_'):
+                    (i, parent, enum_last_index, definition) = parse_ui_enum(i, line, last_file_comment, file, enum_last_index)
+                    assert definition['name'] not in enums[parent]['values']
+                    enums[parent]['values'][definition['name']] = definition
+
+                elif line.lstrip().startswith('//') or line.strip() == '':
+                    pass
+
+                else:
+                    logger.error("Found unrecognized / unsupported prefix: %s", line)
+                    assert False
 
     return OrderedDict(
         callback_methods = [*callbacks.values()],
