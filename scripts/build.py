@@ -265,7 +265,11 @@ def parse_enum_start_end(content, i, line, comment = '', file = ''):
     enuminfo = re.match('^EOS_ENUM_(START|END)\\((?P<name>[a-zA-Z_]+)\\);?$', line)
     assert enuminfo
     assert enuminfo['name'] in ('EOS_EResult', 'EOS_UI_EKeyCombination', 'EOS_UI_EInputStateButtonFlags')
-    return (i, OrderedDict(comment = comment, file = file, name = enuminfo['name']))
+    return (i, OrderedDict(
+        comment = comment,
+        name = enuminfo['name'],
+        source = file,
+    ))
 
 def parse_ui_enum(i, line, comment = '', file = '', enum_last_index = 0):
     """Extract an ui enum's content from a list of lines"""
