@@ -358,17 +358,31 @@ def parse_typedef(content, i, line, comment = '', file = ''):
     definfo = re.match('^(?P<extern>EOS_EXTERN_C )?typedef (?P<type>.+) ((?P<name>[a-zA-Z0-9_]+)|(?P<signature>\\(.*\\* *(?P<name2>[a-zA-Z0-9_]+)\\)\\(.*\\)));$', line)
     assert definfo
     defname = definfo['name'] or definfo['name2'].strip()
-    return (i, OrderedDict(
+    deftype = definfo['type'].strip() + (
+        definfo['signature'].replace(
+            defname if f" {defname}" not in definfo['signature'] else f" {defname}", '', 1
+        ).replace('(EOS_CALL *', '(*').replace('(EOS_MEMORY_CALL *', '(*') if definfo['signature'] is not None else ''
+    )
+    functype = None
+    if '(*)' in deftype:
+        split_type = deftype.split('(*)')
+        assert len(split_type) == 2
+        assert split_type[1].startswith('(') and split_type[1].endswith(')')
+        functype = OrderedDict(
+            returntype = split_type[0].strip(),
+            params = [*explode_parameters(split_type[1][1:-1])] if split_type[1] not in ('void', '') else [],
+        )
+    definition = OrderedDict(
         comment = comment,
         extern = definfo['extern'] is not None,
+        functype = functype,
         name = defname,
         source = file,
-        type = definfo['type'].strip() + (
-            definfo['signature'].replace(
-                defname if f" {defname}" not in definfo['signature'] else f" {defname}", '', 1
-            ).replace('(EOS_CALL *', '(*').replace('(EOS_MEMORY_CALL *', '(*') if definfo['signature'] is not None else ''
-        ),
-    ))
+        type = deftype,
+    )
+    if not definition['functype']:
+        del definition['functype']
+    return (i, definition)
 
 def parse_skip_line(content, i, line, comment = '', file = ''):
     """Parse noop that only returns the received line index"""
