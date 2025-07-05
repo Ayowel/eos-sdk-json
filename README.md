@@ -2,6 +2,10 @@
 
 This projects provides Epic Games API specifications in a JSON file similar to Steam's API JSON file for easy interoperability layer generation with the C EOS SDK.
 
+Releases use the latest SDK version available at the time of the release and the latest commit's hash at the time of the release.
+
+In most cases, you should use the latest release or a fixed release version.
+
 ## Build a specification file
 
 To build a specification file:
