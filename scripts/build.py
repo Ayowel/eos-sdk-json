@@ -321,7 +321,7 @@ def parse_typedef(content, i, line, comment = '', file = ''):
         type = definfo['type'].strip() + (
             definfo['signature'].replace(
                 defname if f" {defname}" not in definfo['signature'] else f" {defname}", '', 1
-            ) if definfo['signature'] is not None else ''
+            ).replace('(EOS_CALL *', '(*').replace('(EOS_MEMORY_CALL *', '(*') if definfo['signature'] is not None else ''
         ),
     ))
 
