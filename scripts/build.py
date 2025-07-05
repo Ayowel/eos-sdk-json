@@ -136,6 +136,64 @@ def parse_callback(content, i, line, comment = '', file = ''):
         source = file,
     ))
 
+def parse_struct_union(content, i, line, comment = ''):
+    """Extract a struct's union's signature from a list of lines"""
+    assert line.strip() == 'union'
+    assert content[i].strip() == '{'
+    i += 1
+
+    union = OrderedDict(
+        comment = comment,
+        name = '',
+        type = '',
+        unionitems = [],
+    )
+    union_content = ''
+
+    while i < len(content):
+        line = content[i].strip()
+        i += 1
+        last_comment = ''
+        if line.lstrip().startswith('/*'):
+            while line.lstrip().startswith('/*'):
+                (i, last_comment) = absorb_comment(content, i, line)
+                if i >= len(content):
+                    i += 1
+                    break
+                line = content[i]
+                i += 1
+            if i > len(content):
+                continue
+
+        if line == '':
+            continue
+
+        if line.startswith('}'):
+            lineinfo = re.match('^} (?P<name>[a-zA-Z_]+);$', line)
+            assert lineinfo
+            union['name'] = lineinfo['name']
+            union['type'] = f"union\n{union_content}\n\u007d"
+            return (i, union)
+
+        union_content = f"{union_content}\n{line}"
+
+        declinfo = re.match('^(?P<type>.*) (?P<name>[a-zA-Z0-9_[\\]]+);', line)
+        assert declinfo is not None
+        attribute_info = OrderedDict(
+            comment = last_comment,
+            name = declinfo['name'].strip(),
+            recommended_value = None,
+            type = declinfo['type'].strip(),
+        )
+        comment_info = re.search(': Set this to (?P<value>[^.\r\n]+)([.\r\n]|$)', last_comment)
+        if comment_info:
+            attribute_info['recommended_value'] = comment_info['value']
+        else:
+            del attribute_info['recommended_value']
+        union['unionitems'].append(attribute_info)
+
+    raise Exception('Reached end of file without exiting union context')
+
 def parse_struct(content, i, line, comment = '', file = ''):
     """Extract a struct's signature from a list of lines"""
     structinfo = re.match('^EOS_STRUCT\\((?P<name>[a-zA-Z0-9_]+), *\\($', line)
@@ -154,21 +212,8 @@ def parse_struct(content, i, line, comment = '', file = ''):
             break
 
         if line == 'union':
-            union_content = ''
-            while i < len(content):
-                line = content[i].strip()
-                i += 1
-                if line.startswith('}'):
-                    lineinfo = re.match('^} (?P<name>[a-zA-Z_]+);$', line)
-                    assert lineinfo
-                    struct_attrs.append(OrderedDict(
-                        fieldcomment = last_comment,
-                        fieldname = lineinfo['name'],
-                        fieldtype = f"union\n{union_content}\n\u007d",
-                    ))
-                    last_comment = ''
-                    break
-                union_content = f"{union_content}\n{line}"
+            (i, union) = parse_struct_union(content, i, line, comment)
+            struct_attrs.append(union)
             continue
 
         is_comment = line.startswith('/*')
