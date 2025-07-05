@@ -217,7 +217,7 @@ def parse_struct(content, i, line, comment = '', file = ''):
             continue
 
         is_comment = line.startswith('/*')
-        declinfo = re.match('^(?P<type>.*) (?P<name>[a-zA-Z0-9_[\\]]+);', line)
+        declinfo = re.match(r'^(?P<type>.*) (?P<name>[a-zA-Z0-9_]+)(?P<arrayinfo>\[[A-Za-z0-9_]+\])?;', line)
         assert is_comment or declinfo
         if is_comment:
             (i, last_comment) = absorb_comment(content, i, line)
@@ -226,7 +226,7 @@ def parse_struct(content, i, line, comment = '', file = ''):
                 comment = last_comment,
                 name = declinfo['name'],
                 recommended_value = None,
-                type = declinfo['type'],
+                type = declinfo['type']+(declinfo['arrayinfo'] or ''),
             )
             comment_info = re.search(': Set this to (?P<value>[^.\r\n]+)([.\r\n]|$)', last_comment)
             if comment_info:
