@@ -428,9 +428,13 @@ def index_sdk_directory(dir_path): # pylint: disable=too-many-locals
     # Index all headers
     files_index = build_header_file_index(dir_path)
     files_order = build_file_read_order(files_index)
-    # Do not parse eos_base as it only profides multiple definitions of other defines
+    # Overwride eos_base as it mostly provides hard-to-parse definitions.
     assert 'eos_base.h' in files_order
-    files_order.remove('eos_base.h')
+    files_index['eos_base.h'] = [
+        'typedef int32_t EOS_Bool;',
+        '#define EOS_TRUE 1',
+        '#define EOS_FALSE 0',
+    ]
 
     flags = [
         ('EOS_DECLARE_FUNC', parse_function, partial(assert_insert, functions, 'methodname_flat')),
