@@ -382,10 +382,9 @@ def build_header_file_index(dir_path):
         dirs.sort()
         for file in sorted(files):
             assert file not in files_index
-            if not file.endswith('.h'):
-                continue
-            with open(os.path.join(path, file), 'r', encoding='utf8') as handle:
-                files_index[file] = handle.readlines()
+            if any(file.endswith(ext) for ext in ('.h', '.inl')):
+                with open(os.path.join(path, file), 'r', encoding='utf8') as handle:
+                    files_index[file] = handle.readlines()
     return files_index
 
 def build_file_read_order(files_index):
@@ -400,7 +399,7 @@ def build_file_read_order(files_index):
                 assert included
                 path = included['path'].strip()
                 if path.startswith('"') and path.endswith('"'):
-                    if path.endswith('.h"'):
+                    if any(file.endswith(ext) for ext in ('.h', '.inl')):
                         assert path[1:-1] in files_index
                         includes.add(path[1:-1])
                 elif (path.startswith('<') and path.endswith('>')) or re.match('^[a-zA-Z0-9_]+$', path):
@@ -408,6 +407,14 @@ def build_file_read_order(files_index):
                 else:
                     assert False
         files_priority[file] = includes
+
+    # Exclude .inl files that are never included in .h files
+    excluded_files = []
+    for f in files_priority:
+        if f.endswith('.inl') and not any(k.endswith('.h') and f in v for k,v in files_priority.items()):
+            excluded_files.append(f)
+    for f in excluded_files:
+        del files_priority[f]
 
     # Sort in inclusion order
     files_order = []
