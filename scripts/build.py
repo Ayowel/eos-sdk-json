@@ -498,8 +498,8 @@ def index_sdk_directory(dir_path): # pylint: disable=too-many-locals
     assert 'eos_base.h' in files_order
     files_index['eos_base.h'] = [
         'typedef int32_t EOS_Bool;',
-        '#define EOS_TRUE 1',
-        '#define EOS_FALSE 0',
+        '#define EOS_TRUE ((EOS_Bool)1)',
+        '#define EOS_FALSE ((EOS_Bool)0)',
     ]
 
     flags = [
