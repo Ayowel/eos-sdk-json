@@ -14,7 +14,7 @@ EPIC_GAMES_URL="${EPIC_GAMES_URL:-https://onlineservices.epicgames.com}"
 EPIC_GAMES_SDK_TYPE="${EPIC_GAMES_SDK_TYPE:-sdk}"
 
 # Get available SDK metadata
-eos_info="$(curl "${EPIC_GAMES_URL}/api/sdk")"
+eos_info="$(curl --fail "${EPIC_GAMES_URL}/api/sdk")"
 
 # Get the desired SDK's information
 eos_sdk_info="$(jq ".results.${EPIC_GAMES_SDK_TYPE}" <<<"${eos_info}")"
@@ -29,7 +29,7 @@ test -n "${eos_sdk_version}" && test "${eos_sdk_version}" != null
 mkdir -p "$OUTPUT_DIR"
 
 output_file="${OUTPUT_DIR%%/}/sdk-$eos_sdk_version.zip"
-download_url="https://onlineservices.epicgames.com/api/sdk/download?archive_id=${eos_sdk_archive_id}&archive_type=${EPIC_GAMES_SDK_TYPE}"
+download_url="${EPIC_GAMES_URL}/api/sdk/download?archive_id=${eos_sdk_archive_id}&archive_type=${EPIC_GAMES_SDK_TYPE}"
 wget -O "$output_file" "$download_url"
 
 # Output structured download information
