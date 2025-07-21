@@ -14,7 +14,7 @@ To build a specification file:
 
 ```sh
 # Requires curl and jq
-./get_sdk.sh target
+./scripts/get_sdk.sh target
 unzip -d target target/*.zip 'SDK/Include/*'
 ```
 
