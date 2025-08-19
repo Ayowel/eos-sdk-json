@@ -34,6 +34,7 @@ DIRECTIVES_IGNORE_LIST = (
 # These enums are declared in specific directories that force us to pre-declare them.
 SCOPED_ENUMS = OrderedDict(
     EOS_EResult = OrderedDict(),
+    EOS_ELogCategory = OrderedDict(),
     EOS_UI_EKeyCombination = OrderedDict(),
     EOS_UI_EInputStateButtonFlags = OrderedDict(),
 )
@@ -360,6 +361,19 @@ def parse_ui_enum(i, line, comment = '', file = '', enum_last_index = 0):
         ))
     assert False
 
+def parse_log_enum_value(content, i, line, comment = '', file = ''):
+    valinfo = re.match('^(?P<macro>PROCESS_CATEGORY(_LAST)?)\\((?P<alias>[a-zA-Z0-9_]+), (?P<name>[a-zA-Z0-9_]+)(, (?P<value>.+))?\\)$', line)
+    assert valinfo
+    macro = valinfo['macro'].strip()
+    alias = valinfo['alias'].strip()
+    name = valinfo['name'].strip()
+    value = valinfo['value'].strip()
+    return (i, OrderedDict(
+        comment = comment,
+        name = name,
+        value = value,
+    ))
+
 def parse_typedef(content, i, line, comment = '', file = ''):
     """Extract a typedef's content from a list of lines"""
     _ = (content, file)
@@ -499,6 +513,7 @@ def index_sdk_directory(dir_path): # pylint: disable=too-many-locals
         ('EOS_DECLARE_CALLBACK', parse_callback, partial(assert_insert, callbacks, 'callbackname')),
         ('EOS_STRUCT', parse_struct, partial(assert_insert, structs, 'struct')),
         ('EOS_RESULT_VALUE', parse_result_value, partial(assert_insert, SCOPED_ENUMS['EOS_EResult'], 'name')),
+        ('PROCESS_CATEGORY', parse_log_enum_value, partial(assert_insert, SCOPED_ENUMS['EOS_ELogCategory'], 'name')),
         ('EOS_ENUM_START', parse_enum_start_end, partial(assert_insert, enums, 'enumname')),
         ('EOS_ENUM_END', parse_enum_start_end, noop),
         ('EOS_ENUM_BOOLEAN_OPERATORS', parse_skip_line, noop),
