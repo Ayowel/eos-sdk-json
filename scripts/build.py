@@ -31,6 +31,13 @@ DIRECTIVES_IGNORE_LIST = (
     '#undef', '#error'
 )
 
+# These enums are declared in specific directories that force us to pre-declare them.
+SCOPED_ENUMS = OrderedDict(
+    EOS_EResult = OrderedDict(),
+    EOS_UI_EKeyCombination = OrderedDict(),
+    EOS_UI_EInputStateButtonFlags = OrderedDict(),
+)
+
 def absorb_comment(lines, i, line = '/*'):
     """
     Get a comment string from a list of lines.
@@ -309,11 +316,12 @@ def parse_enum_start_end(content, i, line, comment = '', file = ''):
     _ = content
     enuminfo = re.match('^EOS_ENUM_(START|END)\\((?P<name>[a-zA-Z_]+)\\);?$', line)
     assert enuminfo
-    assert enuminfo['name'] in ('EOS_EResult', 'EOS_UI_EKeyCombination', 'EOS_UI_EInputStateButtonFlags')
+    assert enuminfo['name'] in SCOPED_ENUMS
     return (i, OrderedDict(
         comment = comment,
-        name = enuminfo['name'],
+        enumname = enuminfo['name'],
         source = file,
+        values = SCOPED_ENUMS[enuminfo['name']],
     ))
 
 def parse_ui_enum(i, line, comment = '', file = '', enum_last_index = 0):
@@ -468,28 +476,12 @@ def index_sdk_directory(dir_path): # pylint: disable=too-many-locals
     """
     Parse the Epic Games SDK's library to generate an index of its declarations.
     """
-    defines = {}
-    functions = {}
-    callbacks = {}
-    structs = {}
-    typedefs = {}
-    enums = OrderedDict(
-        EOS_EResult = OrderedDict(
-            enumname = 'EOS_EResult',
-            source = 'eos_common.h',
-            values = OrderedDict(),
-        ),
-        EOS_UI_EKeyCombination = OrderedDict(
-            enumname = 'EOS_UI_EKeyCombination',
-            source = 'eos_ui_keys.h',
-            values = OrderedDict(),
-        ),
-        EOS_UI_EInputStateButtonFlags = OrderedDict(
-            enumname = 'EOS_UI_EInputStateButtonFlags',
-            source = 'eos_ui_buttons.h',
-            values = OrderedDict(),
-        ),
-    )
+    defines = OrderedDict()
+    functions = OrderedDict()
+    callbacks = OrderedDict()
+    structs = OrderedDict()
+    typedefs = OrderedDict()
+    enums = OrderedDict()
 
     # Index all headers
     files_index = build_header_file_index(dir_path)
@@ -506,8 +498,9 @@ def index_sdk_directory(dir_path): # pylint: disable=too-many-locals
         ('EOS_DECLARE_FUNC', parse_function, partial(assert_insert, functions, 'methodname_flat')),
         ('EOS_DECLARE_CALLBACK', parse_callback, partial(assert_insert, callbacks, 'callbackname')),
         ('EOS_STRUCT', parse_struct, partial(assert_insert, structs, 'struct')),
-        ('EOS_RESULT_VALUE', parse_result_value, partial(assert_insert, enums['EOS_EResult']['values'], 'name')),
-        (('EOS_ENUM_START', 'EOS_ENUM_END'), parse_enum_start_end, noop),
+        ('EOS_RESULT_VALUE', parse_result_value, partial(assert_insert, SCOPED_ENUMS['EOS_EResult'], 'name')),
+        ('EOS_ENUM_START', parse_enum_start_end, partial(assert_insert, enums, 'enumname')),
+        ('EOS_ENUM_END', parse_enum_start_end, noop),
         ('EOS_ENUM_BOOLEAN_OPERATORS', parse_skip_line, noop),
         ('EOS_ENUM', parse_enum, partial(assert_insert, enums, 'enumname')),
         ('#define', parse_define, partial(assert_insert_if, defines, DEFINES_IGNORE_LIST, 'name')),
@@ -544,8 +537,9 @@ def index_sdk_directory(dir_path): # pylint: disable=too-many-locals
             else:
                 if line.startswith('EOS_UI_'):
                     (i, parent, enum_last_index, definition) = parse_ui_enum(i, line, last_file_comment, file, enum_last_index)
-                    assert definition['name'] not in enums[parent]['values']
-                    enums[parent]['values'][definition['name']] = definition
+                    assert parent in SCOPED_ENUMS
+                    assert definition['name'] not in SCOPED_ENUMS[parent]
+                    SCOPED_ENUMS[parent][definition['name']] = definition
 
                 elif line.lstrip().startswith('//') or line.strip() == '':
                     pass
